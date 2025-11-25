@@ -48,6 +48,7 @@
 #include <assert.h>
 #include "memory_map.h"
 #include "xil_printf.h"
+#include "temperature.h"
 
 P_LOGICAL_SLICE_MAP logicalSliceMapPtr;
 P_VIRTUAL_SLICE_MAP virtualSliceMapPtr;
@@ -58,6 +59,17 @@ P_BAD_BLOCK_TABLE_INFO_MAP bbtInfoMapPtr;
 
 unsigned char sliceAllocationTargetDie;
 unsigned int mbPerbadBlockSpace;
+
+
+static TEMP_CLASS GetTempClassFromLsa(unsigned int logicalSliceAddr) // 추가: 논리 공간 기준 8:2 비율로 Hot-Cold 분류
+{
+    unsigned int hotLimit = (unsigned int)(SLICES_PER_SSD * 8 / 10);
+
+    if (logicalSliceAddr < hotLimit)
+        return TEMP_CLASS_HOT;
+    else
+        return TEMP_CLASS_COLD;
+}
 
 
 void InitAddressMap()
@@ -219,6 +231,7 @@ void InitDieMap()
 void InitBlockMap()
 {
 	unsigned int dieNo, phyBlockNo, virtualBlockNo, remappedPhyBlock;
+	unsigned int hotThreshold = (unsigned int)(USER_BLOCKS_PER_DIE * 8 / 10); // 한 die 안에서 앞 80% 블록은 Hot, 뒤 20%는 COLD
 
 	for(dieNo=0 ; dieNo<USER_DIES ; dieNo++)
 	{
@@ -232,6 +245,11 @@ void InitBlockMap()
 			virtualBlockMapPtr->block[dieNo][virtualBlockNo].invalidSliceCnt = 0;
 			virtualBlockMapPtr->block[dieNo][virtualBlockNo].currentPage = 0;
 			virtualBlockMapPtr->block[dieNo][virtualBlockNo].eraseCnt = 0;
+			
+			if (virtualBlockNo < hotThreshold)
+				virtualBlockMapPtr -> block[dieNo][virtualBlockNo].tempClass = TEMP_CLASS_HOT;
+			else
+				virtualBlockMapPtr -> block[dieNo][virtualBlockNo].tempClass = TEMP_CLASS_COLD;
 
 			if(virtualBlockMapPtr->block[dieNo][virtualBlockNo].bad)
 			{
@@ -641,15 +659,17 @@ unsigned int AddrTransRead(unsigned int logicalSliceAddr)
 		assert(!"[WARNING] Logical address is larger than maximum logical address served by SSD [WARNING]");
 }
 
-unsigned int AddrTransWrite(unsigned int logicalSliceAddr)
+unsigned int AddrTransWrite(unsigned int logicalSliceAddr) // 수정: tempClass 반영
 {
 	unsigned int virtualSliceAddr;
+	TEMP_CLASS temp; // 추가: tempClass 저장 변수
 
-	if(logicalSliceAddr < SLICES_PER_SSD)
+	if (logicalSliceAddr < SLICES_PER_SSD)
 	{
 		InvalidateOldVsa(logicalSliceAddr);
 
-		virtualSliceAddr = FindFreeVirtualSlice();
+		temp = GetTempClassFromLsa(logicalSliceAddr); // 추가: logicalSliceAddr에 해당하는 tempClass 조회
+		virtualSliceAddr = FindFreeVirtualSliceByTemp(temp); // 수정: FindFreeVirtualSlice 함수 대신 tempClass-aware 버전 호출
 
 		logicalSliceMapPtr->logicalSlice[logicalSliceAddr].virtualSliceAddr = virtualSliceAddr;
 		virtualSliceMapPtr->virtualSlice[virtualSliceAddr].logicalSliceAddr = logicalSliceAddr;
@@ -699,6 +719,50 @@ unsigned int FindFreeVirtualSlice()
 	virtualBlockMapPtr->block[dieNo][currentBlock].currentPage++;
 	sliceAllocationTargetDie = FindDieForFreeSliceAllocation();
 	dieNo = sliceAllocationTargetDie;
+	return virtualSliceAddr;
+}
+
+unsigned int FindFreeVirtualSliceByTemp(TEMP_CLASS temp) // 추가: FindFreeVirtualSlice 함수의 tempClass-aware 버전
+{
+	unsigned int currentBlock, virtualSliceAddr, dieNo;
+
+	dieNo = sliceAllocationTargetDie;
+	currentBlock = virtualDieMapPtr->die[dieNo].currentBlock;
+
+	//현재 current Block이 원하는 tempClass가 아니면 새로운 block 할당
+	if(virtualBlockMapPtr->block[dieNo][currentBlock].tempClass != temp ||
+	   virtualBlockMapPtr->block[dieNo][currentBlock].currentPage == USER_PAGES_PER_BLOCK)
+	{
+		currentBlock = GetFromFbListByTemp(dieNo, GET_FREE_BLOCK_NORMAL, temp);
+
+		if(currentBlock != BLOCK_FAIL)
+			virtualDieMapPtr->die[dieNo].currentBlock = currentBlock;
+		else
+		{
+			GarbageCollection(dieNo);
+			currentBlock = virtualDieMapPtr->die[dieNo].currentBlock;
+
+			if (virtualBlockMapPtr->block[dieNo][currentBlock].currentPage == USER_PAGES_PER_BLOCK ||
+				virtualBlockMapPtr->block[dieNo][currentBlock].tempClass != temp)
+			{
+				currentBlock = GetFromFbListByTemp(dieNo, GET_FREE_BLOCK_NORMAL, temp);
+				if(currentBlock != BLOCK_FAIL)
+					virtualDieMapPtr->die[dieNo].currentBlock = currentBlock;
+				else
+					assert(!"[WARNING] There is no available block [WARNING]");
+			}
+		}
+	}
+
+	virtualSliceAddr = Vorg2VsaTranslation(
+		dieNo,
+		currentBlock,
+		virtualBlockMapPtr->block[dieNo][currentBlock].currentPage
+	);
+	virtualBlockMapPtr->block[dieNo][currentBlock].currentPage++;
+
+	sliceAllocationTargetDie = FindDieForFreeSliceAllocation();
+
 	return virtualSliceAddr;
 }
 
@@ -869,6 +933,63 @@ unsigned int GetFromFbList(unsigned int dieNo, unsigned int getFreeBlockOption) 
 	virtualBlockMapPtr->block[dieNo][evictedBlockNo].prevBlock = BLOCK_NONE;
 
 	return evictedBlockNo;
+}
+
+
+unsigned int GetFromFbListByTemp(unsigned int dieNo, unsigned int getFreeblockOption, TEMP_CLASS temp) // 추가: 특정 온도 클래스 블록 중에서만 free block을 할당
+{
+	unsigned int block = virtualDieMapPtr->die[dieNo].headFreeBlock;
+	unsigned int prev = BLOCK_NONE;
+
+	if (getFreeblockOption == GET_FREE_BLOCK_NORMAL)
+	{
+		if(virtualDieMapPtr->die[dieNo].freeBlockCnt <= RESERVED_FREE_BLOCK_COUNT)
+			return BLOCK_FAIL;
+	}
+	else if (getFreeblockOption != GET_FREE_BLOCK_GC)
+	{
+		assert(!"[WARNING] Wrong getFreeBlockOption [WARNING]");
+	}
+
+	// 특정 tempClass 블록 탐색
+	while (block != BLOCK_NONE)
+	{
+		if (virtualBlockMapPtr->block[dieNo][block].tempClass == temp)
+			break;
+
+		prev = block;
+		block = virtualBlockMapPtr->block[dieNo][block].nextBlock;
+	}
+
+	if (block == BLOCK_NONE)
+		return BLOCK_FAIL; // 해당 tempClass free block이 없음
+
+	// 이하로는 기존 GetFromFbList와 유사한 동작 수행
+	if (block == virtualDieMapPtr->die[dieNo].headFreeBlock)
+	{
+		virtualDieMapPtr->die[dieNo].headFreeBlock = virtualBlockMapPtr->block[dieNo][block].nextBlock;
+		if (virtualDieMapPtr->die[dieNo].headFreeBlock != BLOCK_NONE)
+			virtualBlockMapPtr->block[dieNo][virtualDieMapPtr->die[dieNo].headFreeBlock].prevBlock = BLOCK_NONE;
+		else
+			virtualDieMapPtr->die[dieNo].tailFreeBlock = BLOCK_NONE;
+	}
+	else
+	{
+		unsigned int next = virtualBlockMapPtr->block[dieNo][block].nextBlock;
+		virtualBlockMapPtr->block[dieNo][prev].nextBlock = next;
+		if (next != BLOCK_NONE)
+			virtualBlockMapPtr->block[dieNo][next].prevBlock = prev;
+		else
+			virtualDieMapPtr->die[dieNo].tailFreeBlock = prev;
+	}
+
+	virtualBlockMapPtr->block[dieNo][block].free = 0;
+	virtualDieMapPtr->die[dieNo].freeBlockCnt--;
+
+	virtualBlockMapPtr->block[dieNo][block].nextBlock = BLOCK_NONE;
+	virtualBlockMapPtr->block[dieNo][block].prevBlock = BLOCK_NONE;
+
+	return block;
 }
 
 

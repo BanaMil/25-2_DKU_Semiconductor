@@ -49,6 +49,7 @@
 
 #include "ftl_config.h"
 #include "nvme/nvme.h"
+#include "temperature.h"
 
 #define LSA_NONE	0xffffffff
 #define LSA_FAIL	0xffffffff
@@ -131,7 +132,8 @@ typedef struct _VIRTUAL_BLOCK_ENTRY {
 	unsigned int bad : 1;
 	unsigned int free : 1;
 	unsigned int invalidSliceCnt : 16;
-	unsigned int reserved0 :10;
+	unsigned int tempClass : 1; //tempClass 추가: 0 = HOT, 1 = COLD
+	unsigned int reserved0 : 9; // 여유 공간: tempClass에 한 비트를 할당했으니 10 -> 9로 수정
 	unsigned int currentPage : 16;
 	unsigned int eraseCnt : 16;
 	unsigned int prevBlock : 16;
@@ -183,7 +185,6 @@ typedef struct _PHY_BLOCK_MAP {
 	PHY_BLOCK_ENTRY phyBlock[USER_DIES][TOTAL_BLOCKS_PER_DIE];
 } PHY_BLOCK_MAP, *P_PHY_BLOCK_MAP;
 
-
 void InitAddressMap();
 void InitSliceMap();
 void InitBlockDieMap();
@@ -191,6 +192,7 @@ void InitBlockDieMap();
 unsigned int AddrTransRead(unsigned int logicalSliceAddr);
 unsigned int AddrTransWrite(unsigned int logicalSliceAddr);
 unsigned int FindFreeVirtualSlice();
+unsigned int FindFreeVirtualSliceByTemp(TEMP_CLASS temp); // 추가: FindFreeVirtualSlice 함수의 tempClass-aware 버전
 unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo, unsigned int victimBlockNo);
 unsigned int FindDieForFreeSliceAllocation();
 
