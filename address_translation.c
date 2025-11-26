@@ -274,8 +274,8 @@ void InitBlockMap()
 		}
 
 		// die별 Hot/Cold 개수 출력
-        TEMP_LOG("[InitBlockMap] die %d: HOT=%d blocks, COLD=%d blocks\r\n",
-                 dieNo, hotCnt, coldCnt);
+        // TEMP_LOG("[InitBlockMap] die %d: HOT=%d blocks, COLD=%d blocks\r\n",
+        //          dieNo, hotCnt, coldCnt);
 	}
 }
 
@@ -753,11 +753,13 @@ unsigned int FindFreeVirtualSliceByTemp(TEMP_CLASS temp) // 추가: FindFreeVirt
 		currentBlock = GetFromFbListByTemp(dieNo, GET_FREE_BLOCK_NORMAL, temp);
 
 		if(currentBlock != BLOCK_FAIL)
+		{
 			virtualDieMapPtr->die[dieNo].currentBlock = currentBlock;
 
 			// 새 블록 할당 로그
             TEMP_LOG("[WriteAlloc] die %d: allocate block %d for %s\r\n",
                      dieNo, currentBlock, TEMP_STR(temp));
+		}
 		else
 		{
 			GarbageCollection(dieNo);

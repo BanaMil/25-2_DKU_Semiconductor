@@ -201,6 +201,7 @@ void EraseBlock(unsigned int dieNo, unsigned int blockNo);
 
 void PutToFbList(unsigned int dieNo, unsigned int blockNo);
 unsigned int GetFromFbList(unsigned int dieNo, unsigned int getFreeBlockOption);
+unsigned int GetFromFbListByTemp(unsigned int dieNo, unsigned int getFreeBlockOption, TEMP_CLASS temp); // 추가: tempClass-aware 버전
 
 void UpdatePhyBlockMapForGrownBadBlock(unsigned int dieNo, unsigned int phyBlockNo);
 void UpdateBadBlockTableForGrownBadBlock(unsigned int tempBufAddr);
