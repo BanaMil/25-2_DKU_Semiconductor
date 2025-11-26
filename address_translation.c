@@ -50,6 +50,19 @@
 #include "xil_printf.h"
 #include "temperature.h"
 
+// ########################################################
+// Temp-aware 디버깅용 매크로
+// ########################################################
+#define TEMP_DEBUG 1
+
+#if TEMP_DEBUG
+#define TEMP_LOG(fmt, ...) xil_printf(fmt, ##__VA_ARGS__)
+#define TEMP_STR(t) ((t) == TEMP_CLASS_HOT ? "HOT" : "COLD")
+#else
+#define TEMP_LOG(fmt, ...)
+#define TEMP_STR(t) ""
+#endif
+
 P_LOGICAL_SLICE_MAP logicalSliceMapPtr;
 P_VIRTUAL_SLICE_MAP virtualSliceMapPtr;
 P_VIRTUAL_BLOCK_MAP virtualBlockMapPtr;
@@ -259,6 +272,10 @@ void InitBlockMap()
 			else
 				PutToFbList(dieNo, virtualBlockNo);
 		}
+
+		// die별 Hot/Cold 개수 출력
+        TEMP_LOG("[InitBlockMap] die %d: HOT=%d blocks, COLD=%d blocks\r\n",
+                 dieNo, hotCnt, coldCnt);
 	}
 }
 
@@ -737,6 +754,10 @@ unsigned int FindFreeVirtualSliceByTemp(TEMP_CLASS temp) // 추가: FindFreeVirt
 
 		if(currentBlock != BLOCK_FAIL)
 			virtualDieMapPtr->die[dieNo].currentBlock = currentBlock;
+
+			// 새 블록 할당 로그
+            TEMP_LOG("[WriteAlloc] die %d: allocate block %d for %s\r\n",
+                     dieNo, currentBlock, TEMP_STR(temp));
 		else
 		{
 			GarbageCollection(dieNo);
@@ -767,23 +788,26 @@ unsigned int FindFreeVirtualSliceByTemp(TEMP_CLASS temp) // 추가: FindFreeVirt
 }
 
 
-unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo, unsigned int victimBlockNo)
+unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo, unsigned int victimBlockNo, TEMP_CLASS temp) // 수정: tempClass 반영
 {
 	unsigned int currentBlock, virtualSliceAddr, dieNo;
 
 	dieNo = copyTargetDieNo;
-	if(victimBlockNo == virtualDieMapPtr->die[dieNo].currentBlock)
-	{
-		virtualDieMapPtr->die[dieNo].currentBlock = GetFromFbList(dieNo, GET_FREE_BLOCK_GC);
-		if(virtualDieMapPtr->die[dieNo].currentBlock == BLOCK_FAIL)
-			assert(!"[WARNING] There is no available block [WARNING]");
-	}
+	if (victimBlockNo == virtualDieMapPtr->die[dieNo].currentBlock) // 수정: GC 대상 블록이 현재 블록인 경우 다른 블록으로 교체
+    {
+        currentBlock = GetFromFbListByTemp(dieNo, GET_FREE_BLOCK_GC, temp);
+        if (currentBlock == BLOCK_FAIL)
+            assert(!"[WARNING] There is no available block for GC with requested tempClass [WARNING]");
+
+        virtualDieMapPtr->die[dieNo].currentBlock = currentBlock;
+    }
 	currentBlock = virtualDieMapPtr->die[dieNo].currentBlock;
 
-	if(virtualBlockMapPtr->block[dieNo][currentBlock].currentPage == USER_PAGES_PER_BLOCK)
+	if(virtualBlockMapPtr->block[dieNo][currentBlock].currentPage == USER_PAGES_PER_BLOCK || 
+	   virtualBlockMapPtr->block[dieNo][currentBlock].tempClass != temp) // 수정: 현재 블록이 모두 찼거나 tempClass가 일치하지 않는 경우 새 블록 할당
 	{
 
-		currentBlock = GetFromFbList(dieNo, GET_FREE_BLOCK_GC);
+		currentBlock = GetFromFbListByTemp(dieNo, GET_FREE_BLOCK_GC, temp);
 
 		if(currentBlock != BLOCK_FAIL)
 			virtualDieMapPtr->die[dieNo].currentBlock = currentBlock;
@@ -793,7 +817,7 @@ unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo, unsigned in
 	else if(virtualBlockMapPtr->block[dieNo][currentBlock].currentPage > USER_PAGES_PER_BLOCK)
 		assert(!"[WARNING] Current page management fail [WARNING]");
 
-
+	// 선택된 블록의 다음 free page 할당
 	virtualSliceAddr = Vorg2VsaTranslation(dieNo, currentBlock, virtualBlockMapPtr->block[dieNo][currentBlock].currentPage);
 	virtualBlockMapPtr->block[dieNo][currentBlock].currentPage++;
 	return virtualSliceAddr;

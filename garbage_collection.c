@@ -48,6 +48,7 @@
 #include "xil_printf.h"
 #include <assert.h>
 #include "memory_map.h"
+#include "temperature.h"
 
 P_GC_VICTIM_MAP gcVictimMapPtr;
 
@@ -68,12 +69,15 @@ void InitGcVictimMap()
 }
 
 
-void GarbageCollection(unsigned int dieNo)
+void GarbageCollection(unsigned int dieNo) // 수정: tempClass-aware 버전으로 변경
 {
 	unsigned int victimBlockNo, pageNo, virtualSliceAddr, logicalSliceAddr, dieNoForGcCopy, reqSlotTag;
+    TEMP_CLASS temp;
 
 	victimBlockNo = GetFromGcVictimList(dieNo);
 	dieNoForGcCopy = dieNo;
+
+	temp = (TEMP_CLASS)virtualBlockMapPtr->block[dieNo][victimBlockNo].tempClass; // 추가: victim block의 tempClass 확인
 
 	if(virtualBlockMapPtr->block[dieNo][victimBlockNo].invalidSliceCnt != SLICES_PER_BLOCK)
 	{
@@ -117,7 +121,7 @@ void GarbageCollection(unsigned int dieNo)
 					reqPoolPtr->reqPool[reqSlotTag].reqOpt.blockSpace = REQ_OPT_BLOCK_SPACE_MAIN;
 					reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry = AllocateTempDataBuf(dieNo);
 					UpdateTempDataBufEntryInfoBlockingReq(reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry, reqSlotTag);
-					reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr = FindFreeVirtualSliceForGc(dieNoForGcCopy, victimBlockNo);
+					reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr = FindFreeVirtualSliceForGc(dieNoForGcCopy, victimBlockNo, temp); // 수정: tempClass-aware 버전 호출
 
 					logicalSliceMapPtr->logicalSlice[logicalSliceAddr].virtualSliceAddr = reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr;
 					virtualSliceMapPtr->virtualSlice[reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr].logicalSliceAddr = logicalSliceAddr;

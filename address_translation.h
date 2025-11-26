@@ -193,7 +193,7 @@ unsigned int AddrTransRead(unsigned int logicalSliceAddr);
 unsigned int AddrTransWrite(unsigned int logicalSliceAddr);
 unsigned int FindFreeVirtualSlice();
 unsigned int FindFreeVirtualSliceByTemp(TEMP_CLASS temp); // 추가: FindFreeVirtualSlice 함수의 tempClass-aware 버전
-unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo, unsigned int victimBlockNo);
+unsigned int FindFreeVirtualSliceForGc(unsigned int copyTargetDieNo, unsigned int victimBlockNo, TEMP_CLASS temp);
 unsigned int FindDieForFreeSliceAllocation();
 
 void InvalidateOldVsa(unsigned int logicalSliceAddr);
