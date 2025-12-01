@@ -48,11 +48,9 @@
 #include <assert.h>
 #include "memory_map.h"
 #include "xil_printf.h"
-#include "temperature.h"
+#include "temperature.h" // 추가
 
-// ########################################################
 // Temp-aware 디버깅용 매크로
-// ########################################################
 #define TEMP_DEBUG 1
 
 #if TEMP_DEBUG
@@ -74,14 +72,14 @@ unsigned char sliceAllocationTargetDie;
 unsigned int mbPerbadBlockSpace;
 
 
-static TEMP_CLASS GetTempClassFromLsa(unsigned int logicalSliceAddr) // 추가: 논리 공간 기준 8:2 비율로 Hot-Cold 분류
+static TEMP_CLASS GetTempClassFromLsa(unsigned int logicalSliceAddr) // 추가: 논리 공간 기준 2:8 비율로 Hot-Cold 분류 (Hot 20%, Cold 80%)
 {
-    unsigned int hotLimit = (unsigned int)(SLICES_PER_SSD * 8 / 10);
+	unsigned int hotLimit = (unsigned int)(SLICES_PER_SSD * 2 / 10);
 
-    if (logicalSliceAddr < hotLimit)
-        return TEMP_CLASS_HOT;
-    else
-        return TEMP_CLASS_COLD;
+	if (logicalSliceAddr < hotLimit)
+		return TEMP_CLASS_HOT;
+	else
+		return TEMP_CLASS_COLD;
 }
 
 
@@ -244,7 +242,7 @@ void InitDieMap()
 void InitBlockMap()
 {
 	unsigned int dieNo, phyBlockNo, virtualBlockNo, remappedPhyBlock;
-	unsigned int hotThreshold = (unsigned int)(USER_BLOCKS_PER_DIE * 8 / 10); // 한 die 안에서 앞 80% 블록은 Hot, 뒤 20%는 COLD
+	unsigned int hotThreshold = (unsigned int)(USER_BLOCKS_PER_DIE * 2 / 10); // 한 die 안에서 앞 20% 블록은 Hot, 뒤 80%는 COLD
 
 	for(dieNo=0 ; dieNo<USER_DIES ; dieNo++)
 	{
@@ -274,8 +272,8 @@ void InitBlockMap()
 		}
 
 		// die별 Hot/Cold 개수 출력
-        // TEMP_LOG("[InitBlockMap] die %d: HOT=%d blocks, COLD=%d blocks\r\n",
-        //          dieNo, hotCnt, coldCnt);
+        TEMP_LOG("[InitBlockMap] die %d: hotThreshold: %d\r\n",
+                  dieNo, hotThreshold);
 	}
 }
 
