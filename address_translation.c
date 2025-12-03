@@ -82,6 +82,44 @@ static TEMP_CLASS GetTempClassFromLsa(unsigned int logicalSliceAddr) // 추가: 
 		return TEMP_CLASS_COLD;
 }
 
+// Debug helper: count free blocks by temp class for a die and log it
+static void LogFreeBlockCounts(unsigned int dieNo)
+{
+	unsigned int block = virtualDieMapPtr->die[dieNo].headFreeBlock;
+	unsigned int hotCount = 0;
+	unsigned int coldCount = 0;
+
+	while (block != BLOCK_NONE)
+	{
+		if (virtualBlockMapPtr->block[dieNo][block].tempClass == TEMP_CLASS_HOT)
+			hotCount++;
+		else
+			coldCount++;
+
+		block = virtualBlockMapPtr->block[dieNo][block].nextBlock;
+	}
+
+	TEMP_LOG("[FreeBlocks] die %d: hot=%d cold=%d totalFree=%d\r\n",
+			 dieNo, hotCount, coldCount, virtualDieMapPtr->die[dieNo].freeBlockCnt);
+}
+
+// Debug helper: dump free list block indices and their temp class for a die
+static void DumpFreeList(unsigned int dieNo)
+{
+	unsigned int block = virtualDieMapPtr->die[dieNo].headFreeBlock;
+	unsigned int idx = 0;
+
+	TEMP_LOG("[DumpFreeList] die %d: freeBlockCnt=%d\r\n", dieNo, virtualDieMapPtr->die[dieNo].freeBlockCnt);
+	while (block != BLOCK_NONE)
+	{
+		TEMP_LOG("  [%03d] block %d -> %s\r\n", idx, block, TEMP_STR(virtualBlockMapPtr->block[dieNo][block].tempClass));
+		block = virtualBlockMapPtr->block[dieNo][block].nextBlock;
+		idx++;
+		if (idx > USER_BLOCKS_PER_DIE) // safety
+			break;
+	}
+}
+
 
 void InitAddressMap()
 {
@@ -274,6 +312,9 @@ void InitBlockMap()
 		// die별 Hot/Cold 개수 출력
         TEMP_LOG("[InitBlockMap] die %d: hotThreshold: %d\r\n",
                   dieNo, hotThreshold);
+
+        // 초기 free list 내 Hot/Cold 분포 로그
+        LogFreeBlockCounts(dieNo);
 	}
 }
 
@@ -986,7 +1027,14 @@ unsigned int GetFromFbListByTemp(unsigned int dieNo, unsigned int getFreeblockOp
 	}
 
 	if (block == BLOCK_NONE)
+	{
+		// 해당 tempClass free block이 없음 - 상태 로그 출력
+		TEMP_LOG("[GetFromFbListByTemp] die %d: no free block for temp=%s (option=%d)\r\n",
+				dieNo, TEMP_STR(temp), getFreeblockOption);
+		LogFreeBlockCounts(dieNo);
+		DumpFreeList(dieNo);
 		return BLOCK_FAIL; // 해당 tempClass free block이 없음
+	}
 
 	// 이하로는 기존 GetFromFbList와 유사한 동작 수행
 	if (block == virtualDieMapPtr->die[dieNo].headFreeBlock)
