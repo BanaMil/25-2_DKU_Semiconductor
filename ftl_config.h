@@ -234,6 +234,29 @@
 #define MB_PER_METADATA_BLOCK_SPACE			(USER_DIES * MB_PER_BLOCK)
 #define MB_PER_OVER_PROVISION_BLOCK_SPACE	((USER_BLOCKS_PER_SSD / 10) * MB_PER_BLOCK)
 
+//----------------------------------------------
+// ECN-based Static Wear Leveling Configuration
+//----------------------------------------------
+
+// WL 기능 사용 여부 (1=사용, 0=비활성화)
+#define ECN_WL_ENABLE                 1
+
+// ECN 편차가 이 값 이상이면 WL 수행
+// 예) maxEraseCnt - minEraseCnt ≥ 500 이면 static WL 작동
+#define ECN_WL_GAP_THRESHOLD          500
+
+// Static WL에서 victim 선정 조건
+// 해당 블록의 valid page 비율이 이 값(%) 이상이어야 victim 가능
+// (cold data 블록 = valid 비율이 높은 블록)
+#define ECN_WL_MIN_VALID_RATIO        80
+
+// GC 호출 횟수 중 몇 번마다 WL 체크할지
+// 예) GC가 100번 실행될 때마다 1번 static WL 조건 체크
+#define ECN_WL_CHECK_PERIOD_GC        100
+
+// 디버깅용 통계 카운터 사용 여부 (1=사용)
+#define ECN_WL_DEBUG_COUNTER          1
+
 
 void InitFTL();
 void InitChCtlReg();
@@ -242,5 +265,12 @@ void CheckConfigRestriction();
 
 extern unsigned int storageCapacity_L;
 extern T4REGS chCtlReg[USER_CHANNELS];
+
+// ===== WAF / GC 통계용 카운터 =====
+extern unsigned long long cnt_host_write_pages;     // 호스트가 쓴 논리 페이지 수
+extern unsigned long long cnt_nand_program_total;   // 실제 NAND 프로그램(페이지) 수
+extern unsigned long long cnt_gc_write_pages;       // GC/WL로 인해 발생한 프로그램 수
+extern unsigned long long cnt_erase_total;          // (옵션) 총 erase 횟수
+extern unsigned long long cnt_gc_trigger;           // (옵션) GC/WL 트리거 횟수
 
 #endif /* FTL_CONFIG_H_ */

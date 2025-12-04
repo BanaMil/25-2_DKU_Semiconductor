@@ -58,6 +58,8 @@ typedef struct _GC_VICTIM_MAP {
 	GC_VICTIM_LIST_ENTRY gcVictimList[USER_DIES][SLICES_PER_BLOCK + 1];
 } GC_VICTIM_MAP, *P_GC_VICTIM_MAP;
 
+extern unsigned int cnt_gc_trigger;
+
 void InitGcVictimMap();
 void GarbageCollection(unsigned int dieNo);
 

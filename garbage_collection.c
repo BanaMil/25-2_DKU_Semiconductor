@@ -51,6 +51,8 @@
 
 P_GC_VICTIM_MAP gcVictimMapPtr;
 
+unsigned int cnt_gc_trigger = 0;// 추가: ECN 기반 WL을 위한 GC 트리거 카운터
+
 void InitGcVictimMap()
 {
 	int dieNo, invalidSliceCnt;
@@ -65,6 +67,163 @@ void InitGcVictimMap()
 			gcVictimMapPtr->gcVictimList[dieNo][invalidSliceCnt].tailBlock = BLOCK_NONE;
 		}
 	}
+}
+
+
+// 추가: ECN 범위 계산 함수: ECN(eraseCnt)의 최소/최대 값을 한 die 기준으로 구한다.
+static void GetEcnRange(unsigned int dieNo, unsigned int* minE, unsigned int* maxE)
+{
+    unsigned int b;
+
+    *minE = 0xFFFFFFFF;
+    *maxE = 0;
+
+    for (b = 0; b < USER_BLOCKS_PER_DIE; b++)
+    {
+        // bad block은 제외
+        if (virtualBlockMapPtr->block[dieNo][b].bad)
+            continue;
+
+        unsigned int e = virtualBlockMapPtr->block[dieNo][b].eraseCnt;
+
+        if (e < *minE) *minE = e;
+        if (e > *maxE) *maxE = e;
+    }
+
+    // 모든 블록이 bad라면 minE가 0xFFFFFFFF일 수 있으나,
+    // 정상적인 상황에서는 그런 일이 없다고 가정.
+}
+
+
+// 추기: WL용 victim 블록 선택 함수
+// - bad/free 아닌 블록 중에서
+// - 유효 데이터 비율이 높은(cold) 블록
+// - eraseCnt가 가장 작은 블록
+static int SelectEcnWlVictim(unsigned int dieNo)
+{
+    int victim = -1;
+    unsigned int bestErase = 0xFFFFFFFF;
+
+    for (int b = 0; b < USER_BLOCKS_PER_DIE; b++)
+    {
+        VIRTUAL_BLOCK_ENTRY* blk = &virtualBlockMapPtr->block[dieNo][b];
+
+        if (blk->bad)  continue;      // bad block 제외
+        if (blk->free) continue;      // 아직 한 번도 쓰지 않은 free block 제외
+
+        // 총 페이지 수 (여기서는 USER_PAGES_PER_BLOCK 기준으로 가정)
+        unsigned int writtenPages = blk->currentPage;
+        if (writtenPages == 0)
+            continue; // 아무 데이터도 없는 블록은 cold 블록 후보로 볼 필요 없음
+
+        // invalidSliceCnt 를 페이지 단위로 단순히 근사해서 invalid 개수로 사용
+        // (정확한 slice/page 매핑까지는 가지 않고 경향만 본다)
+        unsigned int invalidApprox = blk->invalidSliceCnt;
+        if (invalidApprox > writtenPages)
+            invalidApprox = writtenPages;
+
+        unsigned int valid = writtenPages - invalidApprox;
+        unsigned int validRatio = (valid * 100) / USER_PAGES_PER_BLOCK;
+
+        // 유효 데이터 비율이 너무 낮으면 그냥 GC 대상에 더 가깝다고 보고 제외
+        if (validRatio < ECN_WL_MIN_VALID_RATIO)
+            continue;
+
+        // eraseCnt가 가장 낮은 블록을 선택
+        if (blk->eraseCnt < bestErase)
+        {
+            bestErase = blk->eraseCnt;
+            victim = b;
+        }
+    }
+
+    return victim; // -1이면 WL 하지 않음
+}
+
+
+// 추가: WL 수행 함수
+static void DoEcnWearLeveling(unsigned int dieNo)
+{
+#if !ECN_WL_ENABLE
+    return;
+#endif
+
+    unsigned int minE, maxE;
+    GetEcnRange(dieNo, &minE, &maxE);
+
+    // ECN 편차가 아직 작으면 WL 수행 안 함
+    if (maxE - minE < ECN_WL_GAP_THRESHOLD)
+        return;
+
+    int victimBlockNo = SelectEcnWlVictim(dieNo);
+    if (victimBlockNo < 0)
+        return; // 적절한 victim 없으면 WL 스킵
+
+    unsigned int pageNo, virtualSliceAddr, logicalSliceAddr, dieNoForGcCopy, reqSlotTag;
+    dieNoForGcCopy = dieNo;
+
+    // GC와 동일한 방식으로 valid 데이터만 새로운 free slice에 복사
+    if (virtualBlockMapPtr->block[dieNo][victimBlockNo].invalidSliceCnt != SLICES_PER_BLOCK)
+    {
+        for (pageNo = 0; pageNo < USER_PAGES_PER_BLOCK; pageNo++)
+        {
+            virtualSliceAddr = Vorg2VsaTranslation(dieNo, victimBlockNo, pageNo);
+            logicalSliceAddr = virtualSliceMapPtr->virtualSlice[virtualSliceAddr].logicalSliceAddr;
+
+            if (logicalSliceAddr != LSA_NONE)
+                if (logicalSliceMapPtr->logicalSlice[logicalSliceAddr].virtualSliceAddr == virtualSliceAddr)
+                {
+                    // ===== read 요청 (GC 코드와 동일 패턴) =====
+                    reqSlotTag = GetFromFreeReqQ();
+
+                    reqPoolPtr->reqPool[reqSlotTag].reqType = REQ_TYPE_NAND;
+                    reqPoolPtr->reqPool[reqSlotTag].reqCode = REQ_CODE_READ;
+                    reqPoolPtr->reqPool[reqSlotTag].logicalSliceAddr = logicalSliceAddr;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.dataBufFormat = REQ_OPT_DATA_BUF_TEMP_ENTRY;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandAddr = REQ_OPT_NAND_ADDR_VSA;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandEcc = REQ_OPT_NAND_ECC_ON;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandEccWarning = REQ_OPT_NAND_ECC_WARNING_OFF;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.rowAddrDependencyCheck = REQ_OPT_ROW_ADDR_DEPENDENCY_CHECK;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.blockSpace = REQ_OPT_BLOCK_SPACE_MAIN;
+                    reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry = AllocateTempDataBuf(dieNo);
+                    UpdateTempDataBufEntryInfoBlockingReq(reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry, reqSlotTag);
+                    reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr = virtualSliceAddr;
+
+                    SelectLowLevelReqQ(reqSlotTag);
+
+                    // ===== write 요청 (GC 코드와 동일 패턴) =====
+                    reqSlotTag = GetFromFreeReqQ();
+
+                    reqPoolPtr->reqPool[reqSlotTag].reqType = REQ_TYPE_NAND;
+                    reqPoolPtr->reqPool[reqSlotTag].reqCode = REQ_CODE_WRITE;
+                    reqPoolPtr->reqPool[reqSlotTag].logicalSliceAddr = logicalSliceAddr;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.dataBufFormat = REQ_OPT_DATA_BUF_TEMP_ENTRY;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandAddr = REQ_OPT_NAND_ADDR_VSA;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandEcc = REQ_OPT_NAND_ECC_ON;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.nandEccWarning = REQ_OPT_NAND_ECC_WARNING_OFF;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.rowAddrDependencyCheck = REQ_OPT_ROW_ADDR_DEPENDENCY_CHECK;
+                    reqPoolPtr->reqPool[reqSlotTag].reqOpt.blockSpace = REQ_OPT_BLOCK_SPACE_MAIN;
+                    reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry = AllocateTempDataBuf(dieNo);
+                    UpdateTempDataBufEntryInfoBlockingReq(reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry, reqSlotTag);
+
+                    // GC에서와 동일하게, 새 free slice는 FindFreeVirtualSliceForGc()로 할당
+                    reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr =
+                        FindFreeVirtualSliceForGc(dieNoForGcCopy, victimBlockNo);
+
+                    // 매핑 테이블 업데이트
+                    logicalSliceMapPtr->logicalSlice[logicalSliceAddr].virtualSliceAddr =
+                        reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr;
+                    virtualSliceMapPtr->virtualSlice[
+                        reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr].logicalSliceAddr =
+                        logicalSliceAddr;
+
+                    SelectLowLevelReqQ(reqSlotTag);
+                }
+        }
+    }
+
+    // 마지막에 victim 블록 erase → eraseCnt 는 EraseBlock() 안에서 이미 ++ 됨
+    EraseBlock(dieNo, victimBlockNo);
 }
 
 
@@ -128,6 +287,16 @@ void GarbageCollection(unsigned int dieNo)
 	}
 
 	EraseBlock(dieNo, victimBlockNo);
+
+	// ===== 여기부터 ECN 기반 WL 트리거 코드 추가 =====
+    cnt_gc_trigger++;
+
+#if ECN_WL_ENABLE
+    if (cnt_gc_trigger % ECN_WL_CHECK_PERIOD_GC == 0)
+    {
+        DoEcnWearLeveling(dieNo);
+    }
+#endif
 }
 
 

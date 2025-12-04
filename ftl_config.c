@@ -56,6 +56,7 @@
 unsigned int storageCapacity_L;
 T4REGS chCtlReg[USER_CHANNELS];
 
+
 void InitFTL()
 {
 	CheckConfigRestriction();
