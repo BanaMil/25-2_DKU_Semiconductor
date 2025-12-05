@@ -131,10 +131,10 @@ typedef struct _VIRTUAL_BLOCK_ENTRY {
 	unsigned int bad : 1;
 	unsigned int free : 1;
 	unsigned int invalidSliceCnt : 16;
-	unsigned int reserved0 :10;
+	// unsigned int reserved0 :10;
 	unsigned int currentPage : 16;
 	unsigned int eraseCnt : 16;
-	unsigned int writeCnt;
+	unsigned int writeCnt :10;
 	unsigned int prevBlock : 16;
 	unsigned int nextBlock :16;
 } VIRTUAL_BLOCK_ENTRY, *P_VIRTUAL_BLOCK_ENTRY;
