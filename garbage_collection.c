@@ -48,6 +48,7 @@
 #include "xil_printf.h"
 #include <assert.h>
 #include "memory_map.h"
+#include "ftl_perf_monitor.h"
 
 P_GC_VICTIM_MAP gcVictimMapPtr;
 
@@ -206,6 +207,9 @@ static void DoEcnWearLeveling(unsigned int dieNo)
                     reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry = AllocateTempDataBuf(dieNo);
                     UpdateTempDataBufEntryInfoBlockingReq(reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry, reqSlotTag);
 
+					// ===== [Perf] GC/WL 유효 페이지 복사 카운트 =====
+                    g_ftl_stats.cnt_gc_valid_copy++;
+
                     // GC에서와 동일하게, 새 free slice는 FindFreeVirtualSliceForGc()로 할당
                     reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr =
                         FindFreeVirtualSliceForGc(dieNoForGcCopy, victimBlockNo);
@@ -278,6 +282,9 @@ void GarbageCollection(unsigned int dieNo)
 					UpdateTempDataBufEntryInfoBlockingReq(reqPoolPtr->reqPool[reqSlotTag].dataBufInfo.entry, reqSlotTag);
 					reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr = FindFreeVirtualSliceForGc(dieNoForGcCopy, victimBlockNo);
 
+					// ===== [Perf] GC 유효 페이지 복사 카운트 =====
+                    g_ftl_stats.cnt_gc_valid_copy++;
+
 					logicalSliceMapPtr->logicalSlice[logicalSliceAddr].virtualSliceAddr = reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr;
 					virtualSliceMapPtr->virtualSlice[reqPoolPtr->reqPool[reqSlotTag].nandInfo.virtualSliceAddr].logicalSliceAddr = logicalSliceAddr;
 
@@ -288,7 +295,10 @@ void GarbageCollection(unsigned int dieNo)
 
 	EraseBlock(dieNo, victimBlockNo);
 
-	// ===== 여기부터 ECN 기반 WL 트리거 코드 추가 =====
+	// ===== [Perf] GC 트리거 카운트 =====
+    g_ftl_stats.cnt_gc_trigger++;
+
+	// ===== ECN 기반 WL 트리거 =====
     cnt_gc_trigger++;
 
 #if ECN_WL_ENABLE

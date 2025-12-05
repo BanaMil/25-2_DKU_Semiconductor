@@ -68,6 +68,11 @@
 
 #include "../memory_map.h"
 
+#include "../ftl_perf_monitor.h"
+#include "xtime_l.h"
+
+#define IDLE_TIMEOUT_TICKS   (333333333U)  // 대략 1초 정도 (보드 클럭에 맞게 조정 가능)
+
 volatile NVME_CONTEXT g_nvmeTask;
 
 void nvme_main()
@@ -78,6 +83,7 @@ void nvme_main()
 	xil_printf("!!! Wait until FTL reset complete !!! \r\n");
 
 	InitFTL();
+	InitPerfStats();   // ===== 성능 통계 구조체 초기화 =====
 
 	xil_printf("\r\nFTL reset complete!!! \r\n");
 	xil_printf("Turn on the host PC \r\n");
@@ -189,6 +195,16 @@ void nvme_main()
 			CheckDoneNvmeDmaReq();
 			SchedulingNandReq();
 		}
+
+		if (g_ftl_stats.needs_flush) {
+            XTime now;
+            XTime_GetTime(&now);
+            if ((now - g_ftl_stats.last_req_time) > IDLE_TIMEOUT_TICKS) {
+                xil_printf("\r\n[IDLE FLUSH] Test finished. Final FTL stats:\r\n");
+                PrintPerfStats();
+                g_ftl_stats.needs_flush = 0;   // 중복 출력 방지
+            }
+        }
 	}
 }
 

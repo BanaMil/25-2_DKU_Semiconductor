@@ -54,6 +54,10 @@
 #include "memory_map.h"
 #include "ftl_config.h"
 
+#include "ftl_perf_monitor.h"
+#include "xtime_l.h"
+
+
 P_ROW_ADDR_DEPENDENCY_TABLE rowAddrDependencyTablePtr;
 
 void InitDependencyTable()
@@ -111,6 +115,13 @@ void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigne
 
 	PutToSliceReqQ(reqSlotTag);
 
+	// ===== [Perf] Host write slice 카운트 및 Idle 기준 시간 갱신 =====
+    if (reqCode == REQ_CODE_WRITE) {
+        g_ftl_stats.cnt_host_write_slices++;
+        XTime_GetTime(&g_ftl_stats.last_req_time);
+        g_ftl_stats.needs_flush = 1;
+    }
+
 	tempLsa++;
 	transCounter++;
 	nvmeDmaStartIndex += tempNumOfNvmeBlock;
@@ -132,6 +143,12 @@ void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigne
 		reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.numOfNvmeBlock = tempNumOfNvmeBlock;
 
 		PutToSliceReqQ(reqSlotTag);
+
+		if (reqCode == REQ_CODE_WRITE) {
+            g_ftl_stats.cnt_host_write_slices++;
+            XTime_GetTime(&g_ftl_stats.last_req_time);
+            g_ftl_stats.needs_flush = 1;
+        }
 
 		tempLsa++;
 		transCounter++;
@@ -155,6 +172,12 @@ void ReqTransNvmeToSlice(unsigned int cmdSlotTag, unsigned int startLba, unsigne
 	reqPoolPtr->reqPool[reqSlotTag].nvmeDmaInfo.numOfNvmeBlock = tempNumOfNvmeBlock;
 
 	PutToSliceReqQ(reqSlotTag);
+
+	if (reqCode == REQ_CODE_WRITE) {
+        g_ftl_stats.cnt_host_write_slices++;
+        XTime_GetTime(&g_ftl_stats.last_req_time);
+        g_ftl_stats.needs_flush = 1;
+    }
 }
 
 

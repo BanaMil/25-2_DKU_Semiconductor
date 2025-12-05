@@ -61,6 +61,8 @@
 #include "../ftl_config.h"
 #include "../request_transform.h"
 
+#include "../ftl_perf_monitor.h"
+
 void handle_nvme_io_read(unsigned int cmdSlotTag, NVME_IO_COMMAND *nvmeIOCmd)
 {
 	IO_READ_COMMAND_DW12 readInfo12;
@@ -82,6 +84,7 @@ void handle_nvme_io_read(unsigned int cmdSlotTag, NVME_IO_COMMAND *nvmeIOCmd)
 	ASSERT((nvmeIOCmd->PRP1[0] & 0x3) == 0 && (nvmeIOCmd->PRP2[0] & 0x3) == 0); //error
 	ASSERT(nvmeIOCmd->PRP1[1] < 0x10000 && nvmeIOCmd->PRP2[1] < 0x10000);
 
+    
 	ReqTransNvmeToSlice(cmdSlotTag, startLba[0], nlb, IO_NVM_READ);
 }
 
@@ -109,6 +112,11 @@ void handle_nvme_io_write(unsigned int cmdSlotTag, NVME_IO_COMMAND *nvmeIOCmd)
 	//ASSERT(nlb < MAX_NUM_OF_NLB);
 	ASSERT((nvmeIOCmd->PRP1[0] & 0xF) == 0 && (nvmeIOCmd->PRP2[0] & 0xF) == 0);
 	ASSERT(nvmeIOCmd->PRP1[1] < 0x10000 && nvmeIOCmd->PRP2[1] < 0x10000);
+
+	// ===== [Perf] Host write 요청 바이트 수 계측 =====
+    // NLB 필드는 0-base 이므로 실제 블록 수는 (nlb + 1)
+    g_ftl_stats.cnt_host_req_bytes += (unsigned long long)(nlb + 1) * 512ULL; // LBA 크기가 512B가 아니라 4KB라면 * 4096ULL로 바꿔야 함
+
 
 	ReqTransNvmeToSlice(cmdSlotTag, startLba[0], nlb, IO_NVM_WRITE);
 }

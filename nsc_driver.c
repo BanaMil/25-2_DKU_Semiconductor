@@ -51,6 +51,8 @@
 #include "xparameters.h"
 #include <assert.h>
 
+#include "ftl_perf_monitor.h"
+
 typedef struct
 {
 	unsigned char delayVal[32];
@@ -273,6 +275,9 @@ void __attribute__((optimize("O0"))) V2FProgramPageAsync(T4REGS* t4regs, int way
 	progPagepSLC.pageDataAddress = pageDataBuffer;
 	progPagepSLC.spareDataAddress = spareDataBuffer;
 
+	// ===== [Perf] 실제 NAND 프로그램 횟수 =====
+    g_ftl_stats.cnt_nand_program_total++;
+
 	while (V2FIsControllerBusy(t4regs));
 	V2FFillRegisters(t4regs, T4REG_CMD_PROGRAM_PAGE_TRANSFER_PSLC, progPagepSLC);
 	V2FIssueCommand(t4regs);
@@ -287,6 +292,9 @@ void __attribute__((optimize("O0"))) V2FEraseBlockAsync(T4REGS* t4regs, int way,
 	eraseBlockCmd.cmdSelect = T4NSC_CMD_ERASE_BLOCK;
 	eraseBlockCmd.waySelect = 1 << way;
 	eraseBlockCmd.rowAddress = rowAddress;
+
+	// ===== [Perf] 전체 erase 횟수 =====
+    g_ftl_stats.cnt_erase_total++;
 
 	while (V2FIsControllerBusy(t4regs));
 	V2FFillRegisters(t4regs, T4REG_CMD_ERASE_BLOCK, eraseBlockCmd);
